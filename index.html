@@ -4,67 +4,90 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Сканер штрихкодов</title>
-    <!-- Подключаем Tailwind для стилей -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Подключаем Telegram Web App API -->
+    <!-- Telegram Web App API -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Подключаем библиотеку для сканирования HTML5-QRCode -->
+    <!-- Библиотека для штрихкодов -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
         body { background-color: var(--tg-theme-bg-color, #ffffff); color: var(--tg-theme-text-color, #000000); }
-        #reader { width: 100%; max-width: 500px; margin: 0 auto; border: 2px solid var(--tg-theme-button-color, #3390ec); border-radius: 12px; overflow: hidden; }
+        #reader { width: 100%; max-width: 500px; margin: 0 auto; min-height: 200px; background-color: #f3f4f6; border-radius: 12px; overflow: hidden;}
     </style>
 </head>
 <body class="flex flex-col items-center justify-center min-h-screen p-4 font-sans">
 
-    <div class="text-center w-full max-w-md">
+    <div class="text-center w-full max-w-md flex flex-col items-center">
         <h1 class="text-xl font-bold mb-4">Наведите камеру на штрихкод</h1>
-        <div id="reader"></div>
-        <p id="status" class="mt-4 text-sm opacity-70">Инициализация камеры...</p>
         
-        <button id="close-btn" class="mt-6 w-full py-3 px-4 bg-gray-200 text-gray-800 rounded-xl font-semibold shadow-sm hidden" onclick="Telegram.WebApp.close()">
-            Закрыть
+        <!-- Контейнер для камеры -->
+        <div id="reader" class="shadow-inner border-2 border-dashed border-gray-300"></div>
+        
+        <p id="status" class="mt-4 text-sm font-semibold opacity-70">Камера ожидает запуска...</p>
+        <p id="error-log" class="mt-2 text-xs text-red-500 px-4"></p>
+        
+        <!-- Кнопка ручного запуска -->
+        <button id="start-btn" class="mt-6 w-full py-4 px-4 bg-blue-500 text-white rounded-xl font-bold text-lg shadow-lg active:scale-95 transition-transform">
+            📷 Включить камеру
+        </button>
+
+        <button id="close-btn" class="mt-3 w-full py-3 px-4 bg-gray-200 text-gray-800 rounded-xl font-semibold shadow-sm" onclick="Telegram.WebApp.close()">
+            Отмена
         </button>
     </div>
 
     <script>
-        // Инициализация Telegram Web App
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Разворачиваем на весь экран
+        tg.expand();
 
         const statusText = document.getElementById('status');
-        const closeBtn = document.getElementById('close-btn');
+        const errorLog = document.getElementById('error-log');
+        const startBtn = document.getElementById('start-btn');
+        let html5QrCode;
 
         function onScanSuccess(decodedText, decodedResult) {
-            // Если сканирование успешно, отправляем данные обратно в бота
-            statusText.innerText = "Штрихкод найден! Отправляем...";
-            statusText.className = "mt-4 text-sm text-green-500 font-bold";
+            statusText.innerText = "✅ Штрихкод найден! Отправка...";
+            statusText.className = "mt-4 text-lg text-green-500 font-bold";
             
-            // Вибрация телефона при успешном сканировании (если поддерживается)
             if (tg.HapticFeedback) {
                 tg.HapticFeedback.impactOccurred('heavy');
             }
 
-            // Отправляем текст в бота
-            tg.sendData(decodedText);
+            // Останавливаем сканер и отправляем текст
+            html5QrCode.stop().then(() => {
+                tg.sendData(decodedText);
+            }).catch(err => {
+                // Если не получилось остановить, всё равно отправляем
+                tg.sendData(decodedText);
+            });
         }
 
-        function onScanFailure(error) {
-            // Ошибки сканирования происходят постоянно (когда код не в фокусе), 
-            // поэтому мы их просто игнорируем, чтобы не спамить в консоль.
-        }
+        startBtn.addEventListener('click', () => {
+            errorLog.innerText = "";
+            statusText.innerText = "Запрашиваю доступ к камере...";
+            startBtn.classList.add('hidden'); // Прячем кнопку после нажатия
 
-        // Настройка сканера
-        let html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader",
-            { fps: 10, qrbox: {width: 250, height: 150}, aspectRatio: 1.0 },
-            /* verbose= */ false);
+            html5QrCode = new Html5Qrcode("reader");
             
-        // Запуск сканера
-        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
-        
-        statusText.innerText = "Поиск штрихкода...";
-        closeBtn.classList.remove('hidden');
+            // Настройки сканера (задняя камера)
+            const config = { fps: 10, qrbox: { width: 250, height: 120 } };
+
+            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess)
+                .catch((err) => {
+                    startBtn.classList.remove('hidden'); // Возвращаем кнопку если ошибка
+                    statusText.innerText = "❌ Ошибка запуска";
+                    statusText.className = "mt-4 text-lg text-red-500 font-bold";
+                    
+                    // Расшифровка популярных ошибок
+                    if (err.includes("NotAllowedError") || err.includes("Permission denied")) {
+                        errorLog.innerText = "У Telegram нет разрешения на использование камеры. Зайдите в настройки телефона -> Приложения -> Telegram -> Разрешения, и включите Камеру.";
+                    } else if (err.includes("NotFoundError")) {
+                        errorLog.innerText = "Камера не найдена на этом устройстве.";
+                    } else {
+                        errorLog.innerText = "Техническая ошибка: " + err;
+                    }
+                });
+        });
     </script>
 </body>
 </html>
